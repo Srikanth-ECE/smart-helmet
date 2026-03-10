@@ -1,0 +1,162 @@
+Connections
+
+battery+ ------- dc+
+battery- ---------- dc-
+
+
+
+5v and gnd from dc to breadboard
+3.3v and gnd from dc to breadboard
+
+
+
+5V LINE
+1.Connect 5V to:
+
+2.ESP32 → VIN
+
+3.SIM900A → 5V
+
+4.MQ3 → VCC
+
+5.IR Sensor → VCC
+
+
+
+3V LINE
+1.MPU6050 → VCC
+
+2.Pulse Sensor → +
+
+
+
+All GND must be common:
+
+DC-DC GND
+ESP32 GND
+SIM900A GND
+Extra gnd above RX in GSM
+MQ3 GND
+IR GND
+MPU6050 GND
+Pulse GND
+
+Output pins:
+Device	Pin	ESP32
+MQ3	AO	GPIO34
+IR	OUT	GPIO27
+Pulse	S	GPIO35
+MPU6050	SDA	GPIO21
+MPU6050	SCL	GPIO22
+GSM TX	TX	GPIO16
+GSM RX	RX	GPIO17
+
+
+
+Code:
+
+#include <Wire.h>
+#include <Adafruit_MPU6050.h>
+#include <Adafruit_Sensor.h>
+
+Adafruit_MPU6050 mpu;
+
+#define MQ3_PIN 34
+#define IR_PIN 27
+#define PULSE_PIN 35
+
+#define GSM_TX 16
+#define GSM_RX 17
+
+HardwareSerial gsm(2);
+
+#define ALCOHOL_THRESHOLD 2200
+#define CRASH_THRESHOLD 18.0
+
+String phoneNumber = "+919344659308";
+
+int readAverage(int pin) {
+  long sum = 0;
+  for (int i = 0; i < 10; i++) {
+    sum += analogRead(pin);
+    delay(5);
+  }
+  return sum / 10;
+}
+
+void setup() {
+
+  Serial.begin(115200);
+
+  pinMode(IR_PIN, INPUT);
+
+  analogReadResolution(12);
+
+  gsm.begin(9600, SERIAL_8N1, GSM_RX, GSM_TX);
+
+  Wire.begin(21, 22);
+
+  if (!mpu.begin()) {
+    Serial.println("MPU6050 not detected");
+    while (1);
+  }
+
+  delay(20000);   // MQ3 warmup
+}
+
+void loop() {
+
+  int alcohol = readAverage(MQ3_PIN);
+  int helmet = digitalRead(IR_PIN);
+  int pulse = readAverage(PULSE_PIN);
+
+  sensors_event_t a, g, temp;
+  mpu.getEvent(&a, &g, &temp);
+
+  float totalAcc = sqrt(
+    a.acceleration.x * a.acceleration.x +
+    a.acceleration.y * a.acceleration.y +
+    a.acceleration.z * a.acceleration.z
+  );
+
+  Serial.println("-------------");
+  Serial.println(alcohol);
+
+  if (helmet == HIGH) {
+    Serial.println("Helmet not worn");
+  }
+
+  if (alcohol > ALCOHOL_THRESHOLD) {
+    sendSMS("Alert: Alcohol detected!");
+    delay(15000);
+  }
+
+  if (totalAcc > CRASH_THRESHOLD) {
+    sendSMS("Emergency! Accident detected!");
+    delay(20000);
+  }
+
+  delay(2000);
+}
+
+void sendSMS(String message) {
+
+  gsm.println("AT");
+  delay(500);
+
+  gsm.println("AT+CMGF=1");
+  delay(1000);
+
+  gsm.print("AT+CMGS=\"");
+  gsm.print(phoneNumber);
+  gsm.println("\"");
+  delay(1000);
+
+  gsm.print(message);
+  delay(500);
+
+  gsm.write(26);
+  delay(5000);
+}
+
+

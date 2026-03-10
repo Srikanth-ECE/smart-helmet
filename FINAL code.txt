@@ -1,0 +1,136 @@
+#include <Wire.h>
+
+// ---------------- PIN DEFINITIONS ----------------
+#define MQ3_PIN 34
+#define IR_PIN 27
+#define PULSE_PIN 35
+
+#define GSM_TX 16
+#define GSM_RX 17
+
+#define MPU_ADDR 0x68
+
+HardwareSerial gsm(2);
+
+// ---------------- THRESHOLDS ----------------
+#define ALCOHOL_THRESHOLD 800     // Your reading ~200-300 normal
+#define CRASH_THRESHOLD 9000      // Based on your serial values
+
+String phoneNumber = "+919344659308";  // CHANGE THIS
+
+bool crashSent = false;
+bool alcoholSent = false;
+
+// ---------------- SETUP ----------------
+void setup() {
+
+  Serial.begin(115200);
+
+  pinMode(IR_PIN, INPUT);
+
+  gsm.begin(9600, SERIAL_8N1, GSM_RX, GSM_TX);
+
+  Wire.begin(21, 22);
+
+  // Wake MPU6050
+  Wire.beginTransmission(MPU_ADDR);
+  Wire.write(0x6B);
+  Wire.write(0);
+  Wire.endTransmission(true);
+
+  Serial.println("SMART HELMET SYSTEM STARTED");
+  delay(20000);  // MQ3 warmup
+
+  sendSMS("Smart Helmet System Activated");
+}
+
+// ---------------- LOOP ----------------
+void loop() {
+
+  int alcoholValue = analogRead(MQ3_PIN);
+  int helmetStatus = digitalRead(IR_PIN);
+  int pulseValue = analogRead(PULSE_PIN);
+
+  int16_t AcX, AcY, AcZ;
+
+  Wire.beginTransmission(MPU_ADDR);
+  Wire.write(0x3B);
+  Wire.endTransmission(false);
+  Wire.requestFrom((uint8_t)MPU_ADDR, (uint8_t)6, true);
+
+  AcX = Wire.read() << 8 | Wire.read();
+  AcY = Wire.read() << 8 | Wire.read();
+  AcZ = Wire.read() << 8 | Wire.read();
+
+  long totalAcc = abs(AcX) + abs(AcY) + abs(AcZ);
+
+  // ---------------- SERIAL MONITOR OUTPUT ----------------
+  Serial.println("--------------------------------------------------");
+
+  Serial.print("Helmet: ");
+  Serial.println(helmetStatus == LOW ? "WORN" : "NOT WORN");
+
+  Serial.print("Alcohol: ");
+  Serial.println(alcoholValue);
+
+  Serial.print("Pulse: ");
+  Serial.println(pulseValue);
+
+  Serial.print("MPU X: "); Serial.print(AcX);
+  Serial.print(" Y: "); Serial.print(AcY);
+  Serial.print(" Z: "); Serial.println(AcZ);
+
+  Serial.print("Total Acc: ");
+  Serial.println(totalAcc);
+
+  Serial.println("--------------------------------------------------");
+
+  // ---------------- ALCOHOL ALERT ----------------
+  if (alcoholValue > ALCOHOL_THRESHOLD && !alcoholSent) {
+    Serial.println("WARNING: Alcohol Detected!");
+    sendSMS("WARNING: Alcohol detected. Vehicle start blocked.");
+    alcoholSent = true;
+  }
+
+  if (alcoholValue < ALCOHOL_THRESHOLD - 200) {
+    alcoholSent = false;
+  }
+
+  // ---------------- CRASH ALERT ----------------
+  if (totalAcc > CRASH_THRESHOLD && !crashSent) {
+    Serial.println("EMERGENCY: Accident Detected!");
+    sendSMS("EMERGENCY: Accident detected. Immediate assistance required.");
+    crashSent = true;
+  }
+
+  if (totalAcc < CRASH_THRESHOLD - 2000) {
+    crashSent = false;
+  }
+
+  delay(2000);
+}
+
+// ---------------- GSM FUNCTION ----------------
+void sendSMS(String message) {
+
+  Serial.println("Sending SMS...");
+
+  gsm.println("AT");
+  delay(1000);
+
+  gsm.println("AT+CMGF=1");
+  delay(1000);
+
+  gsm.print("AT+CMGS=\"");
+  gsm.print(phoneNumber);
+  gsm.println("\"");
+  delay(1000);
+
+  gsm.print(message);
+  delay(500);
+
+  gsm.write(26);
+  delay(5000);
+
+  Serial.println("SMS Sent Successfully");
+}

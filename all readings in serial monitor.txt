@@ -1,0 +1,150 @@
+#include <Wire.h>
+#include <Adafruit_MPU6050.h>
+#include <Adafruit_Sensor.h>
+
+Adafruit_MPU6050 mpu;
+
+#define MQ3_PIN 34
+#define IR_PIN 27
+#define PULSE_PIN 35
+
+#define GSM_TX 16
+#define GSM_RX 17
+
+HardwareSerial gsm(2);
+
+#define ALCOHOL_THRESHOLD 2200
+#define IMPACT_THRESHOLD 18.0
+#define FALL_THRESHOLD 3.0
+#define TILT_ANGLE 60
+
+String phoneNumber = "+91XXXXXXXXXX";
+
+bool accidentSent = false;
+
+int readAverage(int pin) {
+  long sum = 0;
+  for (int i = 0; i < 10; i++) {
+    sum += analogRead(pin);
+    delay(5);
+  }
+  return sum / 10;
+}
+
+void setup() {
+
+  Serial.begin(115200);
+
+  pinMode(IR_PIN, INPUT);
+  analogReadResolution(12);
+
+  gsm.begin(9600, SERIAL_8N1, GSM_RX, GSM_TX);
+
+  Wire.begin(21, 22);
+
+  if (!mpu.begin()) {
+    Serial.println("MPU6050 not detected");
+    while (1);
+  }
+
+  mpu.setAccelerometerRange(MPU6050_RANGE_8_G);
+  delay(20000);  // MQ3 warmup
+}
+
+void loop() {
+
+  int alcohol = readAverage(MQ3_PIN);
+  int helmet = digitalRead(IR_PIN);
+  int pulse = readAverage(PULSE_PIN);
+
+  sensors_event_t a, g, temp;
+  mpu.getEvent(&a, &g, &temp);
+
+  float ax = a.acceleration.x;
+  float ay = a.acceleration.y;
+  float az = a.acceleration.z;
+
+  float totalAcc = sqrt(ax * ax + ay * ay + az * az);
+
+  float angleX = atan2(ay, az) * 180 / PI;
+  float angleY = atan2(-ax, sqrt(ay * ay + az * az)) * 180 / PI;
+
+  Serial.println("-------------");
+  Serial.print("Helmet: "); Serial.println(helmet);
+  Serial.print("Pulse: "); Serial.println(pulse);
+  Serial.print("Alcohol: "); Serial.println(alcohol);
+  Serial.print("Acc Total: "); Serial.println(totalAcc);
+  Serial.print("AngleX: "); Serial.println(angleX);
+  Serial.print("AngleY: "); Serial.println(angleY);
+
+  // Alcohol detection
+  if (alcohol > ALCOHOL_THRESHOLD) {
+    Serial.println("Alcohol detected!");
+  }
+
+  // Crash detection logic
+  if (!accidentSent) {
+
+    // Sudden impact
+    if (totalAcc > IMPACT_THRESHOLD) {
+      Serial.println("Impact detected!");
+      sendSMS("EMERGENCY: Accident detected!");
+      accidentSent = true;
+    }
+
+    // Free fall detection
+    else if (totalAcc < FALL_THRESHOLD) {
+      Serial.println("Free fall detected!");
+      sendSMS("EMERGENCY: Accident detected!");
+      accidentSent = true;
+    }
+
+    // Severe tilt detection
+    else if (abs(angleX) > TILT_ANGLE || abs(angleY) > TILT_ANGLE) {
+      Serial.println("Severe tilt detected!");
+      delay(3000);  // Confirm tilt persists
+
+      sensors_event_t a2, g2, t2;
+      mpu.getEvent(&a2, &g2, &t2);
+
+      float ax2 = a2.acceleration.x;
+      float ay2 = a2.acceleration.y;
+      float az2 = a2.acceleration.z;
+
+      float angleX2 = atan2(ay2, az2) * 180 / PI;
+      float angleY2 = atan2(-ax2, sqrt(ay2 * ay2 + az2 * az2)) * 180 / PI;
+
+      if (abs(angleX2) > TILT_ANGLE || abs(angleY2) > TILT_ANGLE) {
+        Serial.println("Confirmed Accident by tilt!");
+        sendSMS("EMERGENCY: Accident detected!");
+        accidentSent = true;
+      }
+    }
+  }
+
+  delay(2000);
+}
+
+void sendSMS(String message) {
+
+  Serial.println("Sending SMS...");
+
+  gsm.println("AT");
+  delay(1000);
+
+  gsm.println("AT+CMGF=1");
+  delay(1000);
+
+  gsm.print("AT+CMGS=\"");
+  gsm.print(phoneNumber);
+  gsm.println("\"");
+  delay(1000);
+
+  gsm.print(message);
+  delay(500);
+
+  gsm.write(26);
+  delay(5000);
+
+  Serial.println("Alert Sent!");
+}
